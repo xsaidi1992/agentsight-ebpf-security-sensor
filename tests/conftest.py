@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+# =============================================================================
+# TRACEABILITE AVEC LE TECHNICAL ASSESSMENT
+# [BESOIN B] Partie B - probe eBPF, capture des événements système et transport par ring buffer.
+# [BESOIN C] Partie C - modèle Agent Session, arbre de processus et rattachement des descendants.
+# [BESOIN D] Partie D - détection et explication des actions sensibles.
+# [BESOIN E] Partie E - corrélation entre activité LLM et activité du système d’exploitation.
+# [BESOIN T] Section 11 - démonstration reproductible, tests et livrables.
+# Rôle du module : fournir des fixtures déterministes représentant les événements demandés par le sujet.
+# Les commentaires [BESOIN ...] relient chaque fonction et bloc logique à la partie concernée.
+# =============================================================================
+
+
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -15,13 +27,21 @@ from src.models import (
     ProcessForkEvent,
 )
 
+# [TESTS / BESOIN B/C/D/E/T] Constante `BASE_TIME` : fixe un paramètre stable et auditable utilisé par
+# ce module.
 BASE_TIME = datetime(2026, 1, 1, 10, 1, 2, tzinfo=timezone.utc)
 
 
+# [TESTS / BESOIN B/C/D/E/T] Fonction `at` : fonction dédiée à l’opération `at` dans le flux qui
+# consiste à fournir des fixtures déterministes représentant les événements
+# demandés par le sujet.
 def at(seconds: float = 0) -> datetime:
     return BASE_TIME + timedelta(seconds=seconds)
 
 
+# [TESTS / BESOIN B/C/D/E/T] Fonction `exec_event` : fonction dédiée à l’opération `exec_event` dans le
+# flux qui consiste à fournir des fixtures déterministes représentant les
+# événements demandés par le sujet.
 def exec_event(
     pid: int = 100,
     ppid: int = 1,
@@ -51,6 +71,9 @@ def exec_event(
     )
 
 
+# [TESTS / BESOIN B/C/D/E/T] Fonction `fork_event` : fonction dédiée à l’opération `fork_event` dans le
+# flux qui consiste à fournir des fixtures déterministes représentant les
+# événements demandés par le sujet.
 def fork_event(
     pid: int,
     ppid: int,
@@ -73,6 +96,9 @@ def fork_event(
     )
 
 
+# [TESTS / BESOIN B/C/D/E/T] Fonction `exit_event` : fonction dédiée à l’opération `exit_event` dans le
+# flux qui consiste à fournir des fixtures déterministes représentant les
+# événements demandés par le sujet.
 def exit_event(
     pid: int,
     ppid: int,
@@ -95,6 +121,9 @@ def exit_event(
     )
 
 
+# [TESTS / BESOIN B/C/D/E/T] Fonction `llm_event` : fonction dédiée à l’opération `llm_event` dans le
+# flux qui consiste à fournir des fixtures déterministes représentant les
+# événements demandés par le sujet.
 def llm_event(session_id: str = "s1", seconds: float = 0) -> LLMInteractionEvent:
     return LLMInteractionEvent(
         event_id=f"llm-{session_id}-{seconds}",
@@ -108,6 +137,9 @@ def llm_event(session_id: str = "s1", seconds: float = 0) -> LLMInteractionEvent
     )
 
 
+# [TESTS / BESOIN B/C/D/E/T] Fonction `file_open_event` : fonction dédiée à l’opération
+# `file_open_event` dans le flux qui consiste à fournir des fixtures
+# déterministes représentant les événements demandés par le sujet.
 def file_open_event(
     pid: int = 101,
     ppid: int = 100,
@@ -133,6 +165,9 @@ def file_open_event(
     )
 
 
+# [TESTS / BESOIN B/C/D/E/T] Fonction `file_write_event` : fonction dédiée à l’opération
+# `file_write_event` dans le flux qui consiste à fournir des fixtures
+# déterministes représentant les événements demandés par le sujet.
 def file_write_event(
     pid: int = 101,
     ppid: int = 100,
@@ -155,6 +190,9 @@ def file_write_event(
     )
 
 
+# [TESTS / BESOIN B/C/D/E/T] Fonction `network_event` : fonction dédiée à l’opération `network_event`
+# dans le flux qui consiste à fournir des fixtures déterministes représentant
+# les événements demandés par le sujet.
 def network_event(
     pid: int = 101,
     ppid: int = 100,
@@ -177,6 +215,9 @@ def network_event(
     )
 
 
+# [TESTS / BESOIN B/C/D/E/T] Fonction `event_factory` : fonction dédiée à l’opération `event_factory`
+# dans le flux qui consiste à fournir des fixtures déterministes représentant
+# les événements demandés par le sujet.
 @pytest.fixture
 def event_factory() -> dict[str, Any]:
     return {

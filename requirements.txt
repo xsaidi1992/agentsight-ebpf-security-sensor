@@ -1,5 +1,10 @@
+# [BESOIN F] Framework HTTP utilisé par src/api/server.py pour les endpoints imposés.
 fastapi>=0.115,<1.0
+# [BESOIN F/T] Serveur ASGI utilisé par scripts/run_live_api.py pour lancer l’API.
 uvicorn>=0.30,<1.0
+# [BESOIN B/C/D/E/F] Validation stricte des événements, sessions, corrélations et alertes.
 pydantic>=2.7,<3.0
+# [BESOIN T] Moteur de tests unitaires, d’intégration et kernel E2E.
 pytest>=8.0,<10.0
+# [BESOIN F/T] Client HTTP de test pour vérifier les routes FastAPI sans serveur externe.
 httpx>=0.27,<1.0

@@ -1,6 +1,14 @@
 """Explainable detection rules for sensitive AI-agent actions."""
 from __future__ import annotations
 
+# =============================================================================
+# TRACEABILITE AVEC LE TECHNICAL ASSESSMENT
+# [BESOIN D] Partie D - détection et explication des actions sensibles.
+# Rôle du module : appliquer les règles de sécurité explicables aux actions de la session.
+# Les commentaires [BESOIN ...] relient chaque fonction et bloc logique à la partie concernée.
+# =============================================================================
+
+
 import fnmatch
 import ipaddress
 from pathlib import Path
@@ -18,7 +26,11 @@ from src.models import (
 )
 
 
+# [BESOIN D] Classe `SecurityEngine` : classe dédiée à l’opération `SecurityEngine` dans le flux qui
+# consiste à appliquer les règles de sécurité explicables aux actions de la session.
 class SecurityEngine:
+    # [BESOIN D] Constante `SENSITIVE_COMMANDS` : fixe un paramètre stable et auditable utilisé par ce
+    # module.
     SENSITIVE_COMMANDS = {
         "curl",
         "wget",
@@ -36,6 +48,8 @@ class SecurityEngine:
         "gpg",
         "openssl",
     }
+    # [BESOIN D] Constante `SENSITIVE_PATH_PATTERNS` : fixe un paramètre stable et auditable utilisé par
+    # ce module.
     SENSITIVE_PATH_PATTERNS = {
         "/etc/passwd",
         "/etc/shadow",
@@ -52,18 +66,27 @@ class SecurityEngine:
         "*/.kube/*",
         "*/.config/gcloud/*",
     }
+    # [BESOIN D] Constante `CLOUD_METADATA_ADDRESSES` : fixe un paramètre stable et auditable utilisé
+    # par ce module.
     CLOUD_METADATA_ADDRESSES = {
         "169.254.169.254",
         "100.100.100.200",
         "fd00:ec2::254",
     }
+    # [BESOIN D] Constante `SENSITIVE_REMOTE_PORTS` : fixe un paramètre stable et auditable utilisé par
+    # ce module.
     SENSITIVE_REMOTE_PORTS = {22, 23, 2375, 2376, 3306, 5432, 6379, 9200}
 
+    # [BESOIN D] Fonction `_matches_path` : fonction dédiée à l’opération `_matches_path` dans le flux
+    # qui consiste à appliquer les règles de sécurité explicables aux actions de la session.
     @classmethod
     def _matches_path(cls, path: str) -> bool:
         normalized = str(Path(path).expanduser())
         return any(fnmatch.fnmatch(normalized, pattern) for pattern in cls.SENSITIVE_PATH_PATTERNS)
 
+    # [BESOIN D] Fonction `_security_event` : fonction dédiée à l’opération `_security_event` dans le
+    # flux qui consiste à appliquer les règles de sécurité explicables aux actions de la
+    # session.
     @staticmethod
     def _security_event(
         event: BaseOSEvent,
@@ -90,9 +113,14 @@ class SecurityEngine:
             metadata={"source_event_id": event.event_id, "source": event.source},
         )
 
+    # [BESOIN D] Fonction `analyze_event` : évalue un événement contre les règles sensibles et construit
+    # une alerte si nécessaire.
     def analyze_event(self, event: BaseOSEvent, session_id: str) -> Optional[SecurityEvent]:
+        # [BESOIN D] Condition de garde : valide le cas courant avant de poursuivre le flux fonctionnel.
         if isinstance(event, ProcessExecutionEvent):
             command = event.command_name.lower()
+            # [BESOIN D] Condition de garde : valide le cas courant avant de poursuivre le flux
+            # fonctionnel.
             if command in self.SENSITIVE_COMMANDS:
                 return self._security_event(
                     event,
@@ -104,6 +132,7 @@ class SecurityEngine:
                     description=f"The agent executed the configured sensitive command '{command}'.",
                 )
 
+        # [BESOIN D] Condition de garde : valide le cas courant avant de poursuivre le flux fonctionnel.
         if isinstance(event, FileAccessEvent) and self._matches_path(event.path):
             severity = EventSeverity.CRITICAL if event.write_intent else EventSeverity.HIGH
             return self._security_event(
@@ -119,6 +148,7 @@ class SecurityEngine:
                 ),
             )
 
+        # [BESOIN D] Condition de garde : valide le cas courant avant de poursuivre le flux fonctionnel.
         if isinstance(event, FileWriteEvent) and self._matches_path(event.path):
             return self._security_event(
                 event,
@@ -130,6 +160,7 @@ class SecurityEngine:
                 description="The agent wrote to a configured sensitive path.",
             )
 
+        # [BESOIN D] Condition de garde : valide le cas courant avant de poursuivre le flux fonctionnel.
         if isinstance(event, FileDeleteEvent):
             return self._security_event(
                 event,
@@ -141,11 +172,16 @@ class SecurityEngine:
                 description="The agent successfully deleted a file.",
             )
 
+        # [BESOIN D] Condition de garde : valide le cas courant avant de poursuivre le flux fonctionnel.
         if isinstance(event, NetworkConnectionEvent):
+            # [BESOIN D] Gestion d’erreur : isole les dépendances externes et conserve un diagnostic
+            # explicite.
             try:
                 normalized_address = str(ipaddress.ip_address(event.remote_addr))
             except ValueError:
                 normalized_address = event.remote_addr
+            # [BESOIN D] Condition de garde : valide le cas courant avant de poursuivre le flux
+            # fonctionnel.
             if normalized_address in self.CLOUD_METADATA_ADDRESSES:
                 return self._security_event(
                     event,
@@ -156,6 +192,8 @@ class SecurityEngine:
                     rule_name="CLOUD_METADATA_CONNECTION",
                     description="The agent connected to a cloud instance metadata endpoint.",
                 )
+            # [BESOIN D] Condition de garde : valide le cas courant avant de poursuivre le flux
+            # fonctionnel.
             if event.remote_port in self.SENSITIVE_REMOTE_PORTS and normalized_address not in {
                 "127.0.0.1",
                 "::1",
@@ -171,5 +209,7 @@ class SecurityEngine:
                 )
         return None
 
+    # [BESOIN D] Fonction `analyze_many` : évalue un ensemble d’événements et retourne toutes les
+    # alertes générées.
     def analyze_many(self, events: Iterable[BaseOSEvent], session_id: str) -> list[SecurityEvent]:
         return [alert for event in events if (alert := self.analyze_event(event, session_id))]

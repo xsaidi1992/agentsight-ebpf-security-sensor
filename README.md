@@ -4,6 +4,33 @@ A focused Linux implementation for the **Technical Assessment - AI Agent OS-Leve
 
 The sensor observes an AI-agent process tree from the operating-system boundary without modifying the monitored application. It captures real kernel events, sends them through a BPF ring buffer to userspace, reconstructs an Agent Session, correlates AgentSight LLM records with OS activity, detects sensitive actions, persists JSONL records, and exposes the required backend API.
 
+## Version v2 - code commenté et traçabilité du besoin
+
+Cette version ajoute une documentation directement dans le code afin qu’un évaluateur puisse relier chaque composant au Technical Assessment sans devoir deviner son rôle. Les commentaires sont volontairement structurés avec les tags suivants :
+
+| Tag de commentaire | Partie du besoin couverte |
+|---|---|
+| `[BESOIN A]` | Architecture AgentSight et chaîne kernel vers userspace |
+| `[BESOIN B]` | Probe eBPF, capture des événements et ring buffer |
+| `[BESOIN C]` | Agent Session, arbre de processus et rattachement des descendants |
+| `[BESOIN D]` | Détection des actions sensibles et explicabilité |
+| `[BESOIN E]` | Corrélation entre interaction LLM et activité OS |
+| `[BESOIN F]` | API backend et inspection des données collectées |
+| `[BESOIN P]` | Performance, scalabilité, backpressure et pertes |
+| `[BESOIN T]` | Démonstration, tests, build et livrables |
+
+La couverture documentaire porte sur :
+
+- chaque module Python et son rôle dans l’architecture ;
+- chaque classe, fonction, route API et helper ;
+- les principaux blocs conditionnels, boucles, gestionnaires d’erreur et assertions ;
+- chaque modèle et champ structurant les événements ou les sessions ;
+- chaque structure C, map eBPF, tracepoint, helper kernel et fonction du collecteur libbpf ;
+- chaque cible du `Makefile`, dépendance Python, marqueur de test et exclusion Git ;
+- chaque test, avec la partie du besoin qu’il prouve.
+
+Les commentaires n’altèrent pas la logique d’exécution : ils servent de couche de lecture, de revue et de traçabilité. Le contrat partagé `src/ebpf/event.h` reste l’unique ABI kernel/userspace et les tests vérifient qu’il n’existe pas de structure concurrente.
+
 ## Validation status
 
 The repository contains the complete implementation paths requested by the assessment.

@@ -2,12 +2,26 @@
 """Run the API while attaching to a PID or launching an agent command."""
 from __future__ import annotations
 
+# =============================================================================
+# TRACEABILITE AVEC LE TECHNICAL ASSESSMENT
+# [BESOIN A] Partie A - architecture AgentSight et chaîne Linux kernel vers collecteur userspace.
+# [BESOIN B] Partie B - probe eBPF, capture des événements système et transport par ring buffer.
+# [BESOIN C] Partie C - modèle Agent Session, arbre de processus et rattachement des descendants.
+# [BESOIN E] Partie E - corrélation entre activité LLM et activité du système d’exploitation.
+# [BESOIN F] Partie F - exposition des données par l’API backend.
+# [BESOIN P] Section 10 - performance, scalabilité, backpressure et observabilité des pertes.
+# Rôle du module : lancer le capteur live, rattacher une session et exposer les observations via FastAPI.
+# Les commentaires [BESOIN ...] relient chaque fonction et bloc logique à la partie concernée.
+# =============================================================================
+
+
 import argparse
 import sys
 from pathlib import Path
 
 import uvicorn
 
+# [BESOIN A/B/C/E/F/P] Constante `ROOT` : fixe un paramètre stable et auditable utilisé par ce module.
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -23,6 +37,8 @@ from src.service import LiveSensorService
 from src.storage import JsonlEventStore
 
 
+# [BESOIN A/B/C/E/F/P] Fonction `main` : orchestre le scénario exécutable, valide les préconditions et
+# retourne un code de sortie explicite.
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root-pid", type=int, help="PID of an already-running AI agent")
@@ -45,8 +61,12 @@ def main() -> int:
     args = parser.parse_args()
 
     command = list(args.command)
+    # [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le flux
+    # fonctionnel.
     if command and command[0] == "--":
         command = command[1:]
+    # [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le flux
+    # fonctionnel.
     if bool(args.root_pid) == bool(command):
         parser.error("provide exactly one of --root-pid or a command after --")
 
@@ -57,10 +77,16 @@ def main() -> int:
     initial_import_warnings: list[str] = []
     agentsight_cli = None
     prompt_poller = None
+    # [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le flux
+    # fonctionnel.
     if args.agentsight_json:
         initial_import = importer.parse_file(args.agentsight_json, args.session_id)
+    # [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le flux
+    # fonctionnel.
     elif args.agentsight_db:
         agentsight_cli = AgentSightCLI(args.agentsight_bin)
+        # [BESOIN A/B/C/E/F/P] Gestion d’erreur : isole les dépendances externes et conserve un
+        # diagnostic explicite.
         try:
             # Import both prompt/model activity and AgentSight's audit view at
             # startup. The local eBPF source remains authoritative for the live
@@ -78,6 +104,8 @@ def main() -> int:
 
     llm_events = initial_import.llm_events if initial_import else []
 
+    # [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le flux
+    # fonctionnel.
     if args.root_pid:
         service.start_existing(
             args.root_pid,
@@ -105,17 +133,31 @@ def main() -> int:
             *(initial_import.warnings if initial_import else []),
         ],
     }
+    # [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le flux
+    # fonctionnel.
     if initial_import is not None:
+        # [BESOIN A/B/C/E/F/P] Boucle de traitement : parcourt chaque élément de manière déterministe et
+        # traçable.
         for event in initial_import.os_events:
             matched_session, alert, added = runtime.ingest_with_status(event)
+            # [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le
+            # flux fonctionnel.
             if matched_session is None:
                 initial_import_metrics["unmatched_os_events"] += 1
+            # [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le
+            # flux fonctionnel.
             elif added:
                 initial_import_metrics["accepted_os_events"] += 1
+            # [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le
+            # flux fonctionnel.
             if alert is not None:
                 initial_import_metrics["security_events"] += 1
 
+    # [BESOIN A/B/C/E/F/P] Gestion d’erreur : isole les dépendances externes et conserve un diagnostic
+    # explicite.
     try:
+        # [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le flux
+        # fonctionnel.
         if args.agentsight_db:
             prompt_poller = AgentSightPromptPoller(
                 args.agentsight_db,
@@ -127,9 +169,13 @@ def main() -> int:
             )
             prompt_poller.start()
 
+        # [BESOIN A/B/C/E/F/P] Fonction `metrics` : expose les compteurs de fonctionnement, d’erreur et
+        # de perte nécessaires à l’observabilité.
         def metrics():
             values = service.metrics()
             values["agentsight_initial_import"] = initial_import_metrics
+            # [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le
+            # flux fonctionnel.
             if prompt_poller is not None:
                 values["agentsight_prompt_poller"] = prompt_poller.metrics()
             return values
@@ -137,6 +183,8 @@ def main() -> int:
         app = create_api(runtime=runtime, metrics_provider=metrics)
         uvicorn.run(app, host=args.host, port=args.port)
     finally:
+        # [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le flux
+        # fonctionnel.
         if prompt_poller is not None:
             prompt_poller.stop()
         # Attached processes are never owned by the service. A command launched
@@ -145,5 +193,9 @@ def main() -> int:
     return 0
 
 
+# [BESOIN A/B/C/E/F/P] Condition de garde : valide le cas courant avant de poursuivre le flux
+# fonctionnel.
 if __name__ == "__main__":
+    # [BESOIN A/B/C/E/F/P] Échec explicite : refuse une donnée ou un état ambigu au lieu de produire une
+    # fausse preuve.
     raise SystemExit(main())

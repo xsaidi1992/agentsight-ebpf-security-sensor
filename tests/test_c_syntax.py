@@ -1,22 +1,43 @@
 from __future__ import annotations
 
+# =============================================================================
+# TRACEABILITE AVEC LE TECHNICAL ASSESSMENT
+# [BESOIN B] Partie B - probe eBPF, capture des événements système et transport par ring buffer.
+# [BESOIN P] Section 10 - performance, scalabilité, backpressure et observabilité des pertes.
+# [BESOIN T] Section 11 - démonstration reproductible, tests et livrables.
+# Rôle du module : vérifier la syntaxe C des composants eBPF et libbpf sans privilège kernel.
+# Les commentaires [BESOIN ...] relient chaque fonction et bloc logique à la partie concernée.
+# =============================================================================
+
+
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
+# [TESTS / BESOIN B/P/T] Constante `ROOT` : fixe un paramètre stable et auditable utilisé par ce module.
 ROOT = Path(__file__).resolve().parents[1]
+# [TESTS / BESOIN B/P/T] Constante `EBPF` : fixe un paramètre stable et auditable utilisé par ce module.
 EBPF = ROOT / "src" / "ebpf"
 
 
+# [TESTS / BESOIN B/P/T] Fonction `_write` : fonction dédiée à l’opération `_write` dans le flux qui
+# consiste à vérifier la syntaxe C des composants eBPF et libbpf sans privilège
+# kernel.
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
 
 
+# [TESTS / BESOIN B/P/T] Fonction `test_probe_and_native_collector_are_c_syntax_clean` : prouve
+# automatiquement le scénario
+# `test_probe_and_native_collector_are_c_syntax_clean` et protège le comportement
+# contre les régressions.
 def test_probe_and_native_collector_are_c_syntax_clean(tmp_path: Path) -> None:
     clang = shutil.which("clang") or shutil.which("cc")
+    # [TESTS / BESOIN B/P/T] Condition de garde : valide le cas courant avant de poursuivre le flux
+    # fonctionnel.
     if not clang:
         pytest.skip("C compiler is unavailable")
 
@@ -135,6 +156,8 @@ void ring_buffer__free(struct ring_buffer *);
         text=True,
         check=False,
     )
+    # [TESTS / BESOIN B/P/T] Assertion de preuve : vérifie automatiquement l’invariant attendu par le
+    # besoin.
     assert probe.returncode == 0, probe.stderr
 
     native = subprocess.run(
@@ -143,4 +166,6 @@ void ring_buffer__free(struct ring_buffer *);
         text=True,
         check=False,
     )
+    # [TESTS / BESOIN B/P/T] Assertion de preuve : vérifie automatiquement l’invariant attendu par le
+    # besoin.
     assert native.returncode == 0, native.stderr

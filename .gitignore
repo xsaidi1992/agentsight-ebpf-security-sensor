@@ -1,13 +1,24 @@
+# [BESOIN T] Caches Python générés localement ou en CI.
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# [BESOIN T] Environnement virtuel : dépendances reproductibles mais non versionnées.
 .venv/
+
+# [BESOIN B/P/T] Objets eBPF, binaire libbpf et autres sorties de compilation.
 .build/
-artifacts/
-.coverage
-htmlcov/
 build/
 dist/
+
+# [BESOIN T] Rapports de démonstration et résultats runtime générés sur la machine de test.
+artifacts/
+
+# [BESOIN T] Rapports de couverture éventuels.
+.coverage
+htmlcov/
+
+# [BESOIN A/E] Bases AgentSight locales ou exports SQLite contenant des données d’exécution.
 *.db
 *.sqlite
 *.sqlite3

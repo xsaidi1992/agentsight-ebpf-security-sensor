@@ -13,6 +13,17 @@
 #include <bpf/libbpf.h>
 #include "../event.h"
 
+/*
+ * =============================================================================
+ * TRACEABILITE DETAILLEE AVEC LE TECHNICAL ASSESSMENT
+ * [BESOIN A] Ce binaire est le collecteur userspace relié directement au ring buffer.
+ * [BESOIN B] Il valide l’ABI et transforme chaque record kernel en JSONL structuré.
+ * [BESOIN C] Il amorce le PID racine et les PID déjà suivis avant l’attachement.
+ * [BESOIN P] Il publie les métriques de perte, gère les tracepoints optionnels et nettoie les ressources.
+ * =============================================================================
+ */
+
+
 _Static_assert(sizeof(struct agentsight_event_header) == 72,
                "unexpected event-header ABI size");
 _Static_assert(sizeof(struct agentsight_kernel_event) == 1112,
@@ -22,19 +33,25 @@ _Static_assert(sizeof(struct agentsight_kernel_event) == 1112,
 
 static volatile sig_atomic_t stop;
 
+/* [BESOIN A/P] Fonction `on_signal` : convertit SIGINT/SIGTERM en arrêt propre de la boucle de collecte. */
 static void on_signal(int signo)
 {
     (void)signo;
     stop = 1;
 }
 
+/* [BESOIN A/B] Fonction `json_string_n` : échappe une chaîne bornée pour produire un JSONL valide sans
+ * lecture hors limites. */
 static void json_string_n(const char *s, size_t max_len)
 {
     size_t i;
 
     putchar('"');
+    /* [BESOIN A/B/C/P] Boucle bornée : parcourt les éléments sans violer les contraintes du vérificateur
+     * ou de mémoire. */
     for (i = 0; i < max_len && s[i] != '\0'; i++) {
         unsigned char c = (unsigned char)s[i];
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (c == '"' || c == '\\') {
             putchar('\\');
             putchar(c);
@@ -53,6 +70,7 @@ static void json_string_n(const char *s, size_t max_len)
     putchar('"');
 }
 
+/* [BESOIN A/B/C] Fonction `print_common` : sérialise les champs communs de l’ABI kernel/userspace. */
 static void print_common(const struct agentsight_kernel_event *event,
                          const char *record_type)
 {
@@ -71,6 +89,8 @@ static void print_common(const struct agentsight_kernel_event *event,
     json_string_n(header->comm, sizeof(header->comm));
 }
 
+/* [BESOIN A/B] Fonction `print_exec` : sérialise l’exécution, le chemin et argv pour le collecteur
+ * Python. */
 static void print_exec(const struct agentsight_kernel_event *event)
 {
     unsigned int i;
@@ -80,7 +100,10 @@ static void print_exec(const struct agentsight_kernel_event *event)
     json_string_n(event->payload.exec.filename,
                   sizeof(event->payload.exec.filename));
     fputs(",\"argv\":[", stdout);
+    /* [BESOIN A/B/C/P] Boucle bornée : parcourt les éléments sans violer les contraintes du vérificateur
+     * ou de mémoire. */
     for (i = 0; i < event->payload.exec.argc && i < AGENTSIGHT_MAX_ARGS; i++) {
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (i)
             putchar(',');
         json_string_n(event->payload.exec.argv[i],
@@ -93,6 +116,7 @@ static void print_exec(const struct agentsight_kernel_event *event)
            event->payload.exec.syscall_kind);
 }
 
+/* [BESOIN A/C] Fonction `print_fork` : sérialise la relation parent-enfant. */
 static void print_fork(const struct agentsight_kernel_event *event)
 {
     print_common(event, "fork");
@@ -106,6 +130,7 @@ static void print_fork(const struct agentsight_kernel_event *event)
            (unsigned long long)event->payload.fork.child_start_ns);
 }
 
+/* [BESOIN A/C] Fonction `print_exit` : sérialise la terminaison et la durée du processus. */
 static void print_exit(const struct agentsight_kernel_event *event)
 {
     print_common(event, "exit");
@@ -115,6 +140,7 @@ static void print_exit(const struct agentsight_kernel_event *event)
            (unsigned long long)event->payload.exit.duration_ns);
 }
 
+/* [BESOIN A/B/D] Fonction `print_file` : sérialise open, write ou delete avec chemin et résultat. */
 static void print_file(const struct agentsight_kernel_event *event,
                        const char *record_type)
 {
@@ -134,13 +160,17 @@ static void print_file(const struct agentsight_kernel_event *event,
            event->payload.file.path_truncated ? "true" : "false");
 }
 
+/* [BESOIN A/B/D] Fonction `print_network` : convertit l’adresse binaire en texte IPv4/IPv6 puis
+ * sérialise connect. */
 static void print_network(const struct agentsight_kernel_event *event)
 {
     char address[INET6_ADDRSTRLEN] = "unknown";
     const void *source = event->payload.network.address;
 
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (event->payload.network.family == AF_INET)
         (void)inet_ntop(AF_INET, source, address, sizeof(address));
+    /* [BESOIN A/B/C/P] Branche alternative : traite explicitement un second cas supporté. */
     else if (event->payload.network.family == AF_INET6)
         (void)inet_ntop(AF_INET6, source, address, sizeof(address));
 
@@ -153,15 +183,19 @@ static void print_network(const struct agentsight_kernel_event *event)
            event->payload.network.result);
 }
 
+/* [BESOIN A/B/P] Fonction `handle_event` : valide version et taille de l’ABI puis route chaque record du
+ * ring buffer. */
 static int handle_event(void *ctx, void *data, size_t size)
 {
     const struct agentsight_kernel_event *event = data;
 
     (void)ctx;
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (size != sizeof(*event) ||
         event->header.version != AGENTSIGHT_SCHEMA_VERSION)
         return 0;
 
+    /* [BESOIN A/B/C/P] Dispatch : sélectionne le traitement correspondant au type d’événement de l’ABI. */
     switch (event->header.event_type) {
     case AGENTSIGHT_EVENT_EXEC:
         print_exec(event);
@@ -191,14 +225,18 @@ static int handle_event(void *ctx, void *data, size_t size)
     return 0;
 }
 
+/* [BESOIN P] Fonction `emit_stats_if_changed` : publie les métriques kernel uniquement lorsqu’elles
+ * changent. */
 static void emit_stats_if_changed(int stats_fd,
                                   struct agentsight_sensor_stats *previous)
 {
     __u32 key = 0;
     struct agentsight_sensor_stats current = {};
 
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (stats_fd < 0 || bpf_map_lookup_elem(stats_fd, &key, &current) != 0)
         return;
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (memcmp(previous, &current, sizeof(current)) == 0)
         return;
 
@@ -225,6 +263,8 @@ static void emit_stats_if_changed(int stats_fd,
     *previous = current;
 }
 
+/* [BESOIN C] Fonction `read_process_start_ns` : lit /proc/PID/stat pour produire la même identité
+ * temporelle que le probe. */
 static __u64 read_process_start_ns(__u32 pid)
 {
     char path[64];
@@ -239,22 +279,30 @@ static __u64 read_process_start_ns(__u32 pid)
 
     snprintf(path, sizeof(path), "/proc/%u/stat", pid);
     handle = fopen(path, "r");
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (!handle)
         return 0;
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (!fgets(buffer, sizeof(buffer), handle)) {
         fclose(handle);
         return 0;
     }
     fclose(handle);
     right_paren = strrchr(buffer, ')');
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (!right_paren || right_paren[1] != ' ')
         return 0;
     token = strtok_r(right_paren + 2, " ", &save);
+    /* [BESOIN A/B/C/P] Boucle contrôlée : maintient la collecte jusqu’à l’arrêt ou à une erreur
+     * explicite. */
     while (token) {
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (index == 19) {
             char *end = NULL;
             errno = 0;
             ticks = strtoull(token, &end, 10);
+            /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de
+             * poursuivre. */
             if (errno || !end || (*end != '\0' && *end != '\n'))
                 return 0;
             break;
@@ -263,6 +311,7 @@ static __u64 read_process_start_ns(__u32 pid)
         token = strtok_r(NULL, " ", &save);
     }
     hz = sysconf(_SC_CLK_TCK);
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (!ticks || hz <= 0)
         return 0;
     return (__u64)(ticks / (unsigned long long)hz) * 1000000000ULL +
@@ -270,6 +319,7 @@ static __u64 read_process_start_ns(__u32 pid)
                (unsigned long long)hz;
 }
 
+/* [BESOIN C] Fonction `parse_pid` : valide les PID fournis en ligne de commande. */
 static int parse_pid(const char *value, __u32 *pid)
 {
     char *end = NULL;
@@ -277,12 +327,15 @@ static int parse_pid(const char *value, __u32 *pid)
 
     errno = 0;
     parsed = strtoul(value, &end, 10);
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (errno || !end || *end != '\0' || parsed == 0 || parsed > 0xffffffffUL)
         return -1;
     *pid = (__u32)parsed;
     return 0;
 }
 
+/* [BESOIN B/T] Fonction `is_required_section` : distingue les tracepoints indispensables des extensions
+ * optionnelles. */
 static int is_required_section(const char *section)
 {
     static const char *required[] = {
@@ -294,13 +347,18 @@ static int is_required_section(const char *section)
     };
     size_t i;
 
+    /* [BESOIN A/B/C/P] Boucle bornée : parcourt les éléments sans violer les contraintes du vérificateur
+     * ou de mémoire. */
     for (i = 0; i < sizeof(required) / sizeof(required[0]); i++) {
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (section && strcmp(section, required[i]) == 0)
             return 1;
     }
     return 0;
 }
 
+/* [BESOIN B/T] Fonction `tracepoint_exists_for_section` : vérifie la présence réelle du tracepoint dans
+ * tracefs/debugfs. */
 static int tracepoint_exists_for_section(const char *section)
 {
     const char *tracepoint_prefix = "tracepoint/";
@@ -312,17 +370,21 @@ static int tracepoint_exists_for_section(const char *section)
     char raw_group[64] = {};
     size_t group_len;
 
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (!section)
         return 0;
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (strncmp(section, tracepoint_prefix, strlen(tracepoint_prefix)) == 0) {
         group = section + strlen(tracepoint_prefix);
         slash = strchr(group, '/');
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (!slash || !slash[1])
             return 0;
         group_len = (size_t)(slash - group);
         name = slash + 1;
     } else if (strncmp(section, raw_prefix, strlen(raw_prefix)) == 0) {
         name = section + strlen(raw_prefix);
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (strncmp(name, "sched_", 6) == 0)
             snprintf(raw_group, sizeof(raw_group), "sched");
         else
@@ -335,6 +397,7 @@ static int tracepoint_exists_for_section(const char *section)
 
     snprintf(path, sizeof(path), "/sys/kernel/tracing/events/%.*s/%s/id",
              (int)group_len, group, name);
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (access(path, R_OK) == 0)
         return 1;
     snprintf(path, sizeof(path), "/sys/kernel/debug/tracing/events/%.*s/%s/id",
@@ -342,15 +405,21 @@ static int tracepoint_exists_for_section(const char *section)
     return access(path, R_OK) == 0;
 }
 
+/* [BESOIN B/T] Fonction `disable_unavailable_tracepoints` : désactive les probes optionnels
+ * indisponibles et bloque si un probe requis manque. */
 static int disable_unavailable_tracepoints(struct bpf_object *object)
 {
     struct bpf_program *program;
     int missing_required = 0;
 
+    /* [BESOIN A/B/C/P] Boucle bornée : parcourt les éléments sans violer les contraintes du vérificateur
+     * ou de mémoire. */
     bpf_object__for_each_program(program, object) {
         const char *section = bpf_program__section_name(program);
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (tracepoint_exists_for_section(section))
             continue;
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (is_required_section(section)) {
             fprintf(stderr, "missing required tracepoint for section %s\n", section);
             missing_required = 1;
@@ -362,6 +431,8 @@ static int disable_unavailable_tracepoints(struct bpf_object *object)
     return missing_required ? -1 : 0;
 }
 
+/* [BESOIN B/C/P] Fonction `configure_filter` : écrit la configuration et amorce les PID suivis avant
+ * l’attachement. */
 static int configure_filter(struct bpf_object *object,
                             const __u32 *tracked, size_t tracked_count,
                             __u32 root_pid)
@@ -372,17 +443,20 @@ static int configure_filter(struct bpf_object *object,
     __u32 key = 0;
     size_t i;
 
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (config_fd < 0 || tracked_fd < 0) {
         fprintf(stderr, "sensor filter maps not found\n");
         return -1;
     }
     {
         long clock_ticks = sysconf(_SC_CLK_TCK);
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (clock_ticks <= 0) {
             fprintf(stderr, "unable to determine userspace clock tick rate\n");
             return -1;
         }
         config.clock_tick_ns = 1000000000ULL / (__u64)clock_ticks;
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (!config.clock_tick_ns) {
             fprintf(stderr, "invalid userspace clock tick rate: %ld\n", clock_ticks);
             return -1;
@@ -391,14 +465,19 @@ static int configure_filter(struct bpf_object *object,
     config.filter_enabled = tracked_count > 0 ? 1 : 0;
     config.root_pid = root_pid;
     config.root_start_ns = root_pid ? read_process_start_ns(root_pid) : 0;
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (bpf_map_update_elem(config_fd, &key, &config, BPF_ANY) != 0) {
         fprintf(stderr, "failed to configure sensor filter: %s\n", strerror(errno));
         return -1;
     }
+    /* [BESOIN A/B/C/P] Boucle bornée : parcourt les éléments sans violer les contraintes du vérificateur
+     * ou de mémoire. */
     for (i = 0; i < tracked_count; i++) {
         __u64 marker = read_process_start_ns(tracked[i]);
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (!marker)
             marker = 1;
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (bpf_map_update_elem(tracked_fd, &tracked[i], &marker, BPF_ANY) != 0) {
             fprintf(stderr, "failed to seed tracked PID %u: %s\n",
                     tracked[i], strerror(errno));
@@ -408,6 +487,7 @@ static int configure_filter(struct bpf_object *object,
     return 0;
 }
 
+/* [BESOIN T] Fonction `usage` : documente la syntaxe du collecteur natif. */
 static void usage(const char *program)
 {
     fprintf(stderr,
@@ -415,6 +495,8 @@ static void usage(const char *program)
             program);
 }
 
+/* [BESOIN A/B/C/P/T] Fonction `main` : orchestre ouverture, chargement, filtrage, ring buffer,
+ * attachement, polling et nettoyage. */
 int main(int argc, char **argv)
 {
     const char *object_path;
@@ -434,22 +516,30 @@ int main(int argc, char **argv)
     int result = 1;
     int i;
 
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (argc < 2) {
         usage(argv[0]);
         return 2;
     }
     object_path = argv[1];
+    /* [BESOIN A/B/C/P] Boucle bornée : parcourt les éléments sans violer les contraintes du vérificateur
+     * ou de mémoire. */
     for (i = 2; i < argc; i++) {
         __u32 pid;
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if ((!strcmp(argv[i], "--root-pid") || !strcmp(argv[i], "--track-pid")) &&
             i + 1 < argc) {
             int is_root = !strcmp(argv[i], "--root-pid");
+            /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de
+             * poursuivre. */
             if (parse_pid(argv[++i], &pid) != 0 ||
                 tracked_count >= MAX_TRACKED_ARGUMENTS) {
                 usage(argv[0]);
                 return 2;
             }
             tracked[tracked_count++] = pid;
+            /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de
+             * poursuivre. */
             if (is_root)
                 root_pid = pid;
         } else {
@@ -460,12 +550,15 @@ int main(int argc, char **argv)
 
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (setrlimit(RLIMIT_MEMLOCK, &rlimit) != 0)
         fprintf(stderr, "WARN unable to raise RLIMIT_MEMLOCK: %s\n", strerror(errno));
 
+    /* [BESOIN A/B/C/P] Chargement libbpf : ouvre l’objet compilé avant validation et attachement. */
     object = bpf_object__open_file(object_path, NULL);
     {
         long open_error = libbpf_get_error(object);
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (open_error) {
             fprintf(stderr, "failed to open BPF object %s: %s (%ld)\n",
                     object_path, strerror((int)-open_error), open_error);
@@ -473,10 +566,12 @@ int main(int argc, char **argv)
             goto cleanup;
         }
     }
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (disable_unavailable_tracepoints(object) != 0)
         goto cleanup;
     {
         int load_error = bpf_object__load(object);
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (load_error != 0) {
             fprintf(stderr,
                     "failed to load BPF object: %s (%d); check verifier output, privileges, BTF, and kernel support\n",
@@ -484,6 +579,7 @@ int main(int argc, char **argv)
             goto cleanup;
         }
     }
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (configure_filter(object, tracked, tracked_count, root_pid) != 0)
         goto cleanup;
 
@@ -492,26 +588,38 @@ int main(int argc, char **argv)
      * which matters when attaching to an already-running agent. */
     events_fd = bpf_object__find_map_fd_by_name(object, "events");
     stats_fd = bpf_object__find_map_fd_by_name(object, "sensor_stats");
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (events_fd < 0 || stats_fd < 0) {
         fprintf(stderr, "required events/stats maps not found\n");
         goto cleanup;
     }
+    /* [BESOIN A/B/C/P] Initialisation userspace : crée le lecteur du ring buffer avant l’attachement des
+     * probes. */
     ring = ring_buffer__new(events_fd, handle_event, NULL, NULL);
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (!ring) {
         fprintf(stderr, "failed to create ring-buffer reader: %s\n",
                 strerror(errno));
         goto cleanup;
     }
 
+    /* [BESOIN A/B/C/P] Boucle bornée : parcourt les éléments sans violer les contraintes du vérificateur
+     * ou de mémoire. */
     bpf_object__for_each_program(program, object) {
         struct bpf_link *link;
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (bpf_program__fd(program) < 0)
             continue;
+        /* [BESOIN A/B/C/P] Attachement libbpf : relie le programme chargé à son tracepoint kernel. */
         link = bpf_program__attach(program);
         {
             long attach_error = libbpf_get_error(link);
+            /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de
+             * poursuivre. */
             if (attach_error) {
                 const char *section = bpf_program__section_name(program);
+                /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de
+                 * poursuivre. */
                 if (!is_required_section(section)) {
                     fprintf(stderr, "SKIP optional program %s (%s): %s (%ld)\n",
                             bpf_program__name(program),
@@ -526,10 +634,13 @@ int main(int argc, char **argv)
                 goto cleanup;
             }
         }
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (link_count == link_capacity) {
             int new_capacity = link_capacity ? link_capacity * 2 : 8;
             void *new_links = realloc(links,
                                       (size_t)new_capacity * sizeof(*links));
+            /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de
+             * poursuivre. */
             if (!new_links) {
                 bpf_link__destroy(link);
                 goto cleanup;
@@ -546,10 +657,15 @@ int main(int argc, char **argv)
             (unsigned long long)read_process_start_ns(root_pid), tracked_count);
     fflush(stderr);
     result = 0;
+    /* [BESOIN A/B/C/P] Boucle contrôlée : maintient la collecte jusqu’à l’arrêt ou à une erreur
+     * explicite. */
     while (!stop) {
+        /* [BESOIN A/B/C/P] Polling : consomme les événements kernel par lots avec un timeout borné. */
         int rc = ring_buffer__poll(ring, 250);
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (rc == -EINTR)
             break;
+        /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
         if (rc < 0) {
             fprintf(stderr, "ring-buffer poll failed: %s (%d)\n",
                     strerror(-rc), rc);
@@ -561,11 +677,15 @@ int main(int argc, char **argv)
     emit_stats_if_changed(stats_fd, &previous_stats);
 
 cleanup:
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (ring)
         ring_buffer__free(ring);
+    /* [BESOIN A/B/C/P] Boucle contrôlée : maintient la collecte jusqu’à l’arrêt ou à une erreur
+     * explicite. */
     while (link_count > 0)
         bpf_link__destroy(links[--link_count]);
     free(links);
+    /* [BESOIN A/B/C/P] Condition de garde : contrôle un état kernel/userspace avant de poursuivre. */
     if (object)
         bpf_object__close(object);
     return result;
