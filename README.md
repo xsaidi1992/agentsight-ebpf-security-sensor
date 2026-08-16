@@ -4,9 +4,7 @@ Une implémentation Linux ciblée pour le **Technical Assessment - AI Agent OS-L
 
 Le capteur observe l’arbre de processus d’un agent IA depuis la frontière du système d’exploitation, sans modifier l’application surveillée. Il capture de vrais événements kernel, les transmet à l’espace utilisateur via un ring buffer BPF, reconstruit une Agent Session, corrèle les enregistrements LLM AgentSight avec l’activité OS, détecte les actions sensibles, persiste les enregistrements au format JSONL et expose l’API backend requise.
 
-## Version v2 - code commenté et traçabilité du besoin
-
-Cette version ajoute une documentation directement dans le code afin qu’un évaluateur puisse relier chaque composant au Technical Assessment sans devoir deviner son rôle. Les commentaires sont volontairement structurés avec les tags suivants :
+Il existe une documentation directe dans le code afin de relier chaque composant au Technical Assessment sans devoir deviner son rôle. Les commentaires sont volontairement structurés avec les tags suivants :
 
 | Tag de commentaire | Partie du besoin couverte |
 |---|---|
